@@ -8,33 +8,40 @@ import (
 	"time"
 )
 
+// DefaultKeepAliveTimeout default keepalive timeout in seconds
 const (
-	DEFAULT_KEEPALIVE_TIMEOUT = time.Second * 60
+	DefaultKeepAliveTimeout = time.Second * 60
 )
 
+// ManagedConn net.TCPConn with idle mark
 type ManagedConn struct {
 	net.TCPConn
 	idle bool
 }
 
+// NewPool get a new ConnectionPool
 func NewPool() ConnectionPool {
 	return ConnectionPool{
-		timeout: DEFAULT_KEEPALIVE_TIMEOUT,
+		timeout: DefaultKeepAliveTimeout,
 		pool:    make(map[string][]*ManagedConn),
 		mutex:   &sync.Mutex{},
 	}
 }
 
+// ConnectionPool a connection pool
 type ConnectionPool struct {
 	timeout time.Duration
 	pool    map[string][]*ManagedConn
 	mutex   *sync.Mutex
 }
 
+// SetKeepAliveTimeout sets after `to` seconds, conn released to pool will be removed
 func (p *ConnectionPool) SetKeepAliveTimeout(to time.Duration) {
 	p.timeout = to
 }
 
+// GetConn get a connection with specific remote address
+// could be domain:port/ip:port
 func (p ConnectionPool) GetConn(remoteAddr string) (conn *ManagedConn, err error) {
 	remoteAddr = ensurePort(remoteAddr)
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", remoteAddr)
@@ -58,6 +65,7 @@ func (p ConnectionPool) GetConn(remoteAddr string) (conn *ManagedConn, err error
 	return
 }
 
+// ReleaseConn release to pool after used, and will be closed in `timeout` seconds
 func (p ConnectionPool) ReleaseConn(conn *ManagedConn) {
 	conn.idle = true
 	go func() {
