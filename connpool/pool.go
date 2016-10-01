@@ -67,7 +67,10 @@ func (p ConnectionPool) GetConn(remoteAddr string) (conn *ManagedConn, err error
 
 // ReleaseConn release to pool after used, and will be closed in `timeout` seconds
 func (p ConnectionPool) ReleaseConn(conn *ManagedConn) {
+	p.mutex.Lock()
 	conn.idle = true
+	p.mutex.Unlock()
+
 	go func() {
 		timer := time.NewTimer(p.timeout)
 		<-timer.C
@@ -95,9 +98,9 @@ func (p ConnectionPool) createConn(tcpAddr *net.TCPAddr) (conn *ManagedConn) {
 }
 
 func (p ConnectionPool) getFreeConn(tcpAddr string) (c *ManagedConn) {
-	for _, c := range p.pool[tcpAddr] {
+	for _, c = range p.pool[tcpAddr] {
 		if c.idle {
-			break
+			return
 		}
 	}
 	return
