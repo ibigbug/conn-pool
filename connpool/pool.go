@@ -94,8 +94,13 @@ func (p ConnectionPool) Release(conn *ManagedConn) {
 		for _, c := range p.pool[remoteAddr] {
 			debug("%p, ", c)
 		}
-		fmt.Println()
+		debug("")
 		idx := findIdx(p.pool[remoteAddr], conn)
+
+		if idx == -1 {
+			// conn has already been released
+			return
+		}
 		p.pool[remoteAddr] = append(p.pool[remoteAddr][:idx], p.pool[remoteAddr][idx+1:]...)
 		conn.Close()
 	}()
