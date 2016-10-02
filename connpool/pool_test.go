@@ -1,7 +1,6 @@
 package connpool
 
 import (
-	"fmt"
 	"testing"
 	"time"
 )
@@ -21,7 +20,7 @@ func TestConnCache(t *testing.T) {
 	p := NewPool()
 	p.SetKeepAliveTimeout(3 * time.Second)
 
-	conn1, err := p.GetConn("a1.alipay-inc.xyz")
+	conn1, err := p.Get("a1.alipay-inc.xyz")
 	handleError(err, t)
 	if conn1 == nil {
 		t.Error(1)
@@ -31,12 +30,11 @@ func TestConnCache(t *testing.T) {
 		t.Error(2)
 	}
 
-	conn2, err := p.GetConn("a1.alipay-inc.xyz")
+	conn2, err := p.Get("a1.alipay-inc.xyz")
 	handleError(err, t)
 	if conn2 == nil {
 		t.Error(3)
 	}
-	fmt.Printf("%p, %p\n", conn1, conn2)
 	if conn1 == conn2 {
 		// should create new conn
 		t.Error(4)
@@ -46,14 +44,19 @@ func TestConnCache(t *testing.T) {
 		t.Error(5)
 	}
 
-	p.ReleaseConn(conn1)
+	p.Release(conn1)
 
-	conn3, err := p.GetConn("a1.alipay-inc.xyz")
+	conn3, err := p.Get("a1.alipay-inc.xyz")
 	handleError(err, t)
 	if conn3 == nil {
 		t.Error(6)
 	}
 
+	// wait Release conn1 go-routine pass
+	t1 := time.NewTimer(5 * time.Second)
+	<-t1.C
+
+	// conn1 should be kept
 	if len(p.pool[A1]) != 2 {
 		t.Error(7)
 	}
@@ -63,8 +66,8 @@ func TestConnCache(t *testing.T) {
 		t.Error(8)
 	}
 
-	p.ReleaseConn(conn2)
-	p.ReleaseConn(conn3)
+	p.Release(conn2)
+	p.Release(conn3)
 
 	conn1 = nil
 	conn2 = nil
@@ -73,6 +76,8 @@ func TestConnCache(t *testing.T) {
 	timer := time.NewTimer(5 * time.Second)
 	<-timer.C
 
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	if len(p.pool[A1]) != 0 {
 		t.Error(9)
 	}
@@ -82,7 +87,7 @@ func TestConnpoolGetAndRelease(t *testing.T) {
 	p := NewPool()
 	p.SetKeepAliveTimeout(3 * time.Second)
 
-	conn1, err := p.GetConn("a1.alipay-inc.xyz")
+	conn1, err := p.Get("a1.alipay-inc.xyz")
 	handleError(err, t)
 	if conn1 == nil {
 		t.Error(1)
@@ -92,7 +97,7 @@ func TestConnpoolGetAndRelease(t *testing.T) {
 		t.Error(2)
 	}
 
-	conn2, err := p.GetConn("a2.alipay-inc.xyz")
+	conn2, err := p.Get("a2.alipay-inc.xyz")
 	handleError(err, t)
 	if conn2 == nil {
 		t.Error(3)
@@ -111,11 +116,15 @@ func TestConnpoolGetAndRelease(t *testing.T) {
 		t.Error(6)
 	}
 
-	p.ReleaseConn(conn1)
-	p.ReleaseConn(conn2)
+	p.Release(conn1)
+	p.Release(conn2)
 
 	timer = time.NewTimer(4 * time.Second)
 	<-timer.C
+
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
 	if len(p.pool[A1]) != 0 {
 		t.Error(7)
 	}

@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,7 +17,7 @@ const (
 // ManagedConn net.TCPConn with idle mark
 type ManagedConn struct {
 	net.TCPConn
-	idle bool
+	idle uint32
 }
 
 // NewPool get a new ConnectionPool
@@ -24,7 +25,7 @@ func NewPool() ConnectionPool {
 	return ConnectionPool{
 		timeout: DefaultKeepAliveTimeout,
 		pool:    make(map[string][]*ManagedConn),
-		mutex:   &sync.Mutex{},
+		mutex:   &sync.Mutex{}, // should lock per host
 	}
 }
 
@@ -40,9 +41,12 @@ func (p *ConnectionPool) SetKeepAliveTimeout(to time.Duration) {
 	p.timeout = to
 }
 
-// GetConn get a connection with specific remote address
+// Get get a connection with specific remote address
 // could be domain:port/ip:port
-func (p ConnectionPool) GetConn(remoteAddr string) (conn *ManagedConn, err error) {
+func (p ConnectionPool) Get(remoteAddr string) (conn *ManagedConn, err error) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
 	remoteAddr = ensurePort(remoteAddr)
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", remoteAddr)
 	if err != nil {
@@ -60,26 +64,40 @@ func (p ConnectionPool) GetConn(remoteAddr string) (conn *ManagedConn, err error
 		conn = p.getFreeConn(id)
 		if conn == nil {
 			conn = p.createConn(tcpAddr)
+		} else {
+			debug("reusing conn %p, idle changed to 0\n", conn)
+			atomic.StoreUint32(&conn.idle, 0)
 		}
 	}
 	return
 }
 
-// ReleaseConn release to pool after used, and will be closed in `timeout` seconds
-func (p ConnectionPool) ReleaseConn(conn *ManagedConn) {
-	p.mutex.Lock()
-	conn.idle = true
-	p.mutex.Unlock()
+// Release release to pool after used, and will be closed in `timeout` seconds
+func (p ConnectionPool) Release(conn *ManagedConn) {
+	debug("releasing conn %p, idle changed to 1\n", conn)
+	atomic.StoreUint32(&conn.idle, 1)
 
 	go func() {
 		timer := time.NewTimer(p.timeout)
 		<-timer.C
 		remoteAddr := conn.RemoteAddr().String()
+
+		// Lock it
 		p.mutex.Lock()
+		defer p.mutex.Unlock()
+
+		if atomic.LoadUint32(&conn.idle) == 0 {
+			debug("conn %p is reused, skipping release\n", conn)
+			return
+		}
+		debug("doing release %p(idle: %v), current conn pool: ", conn, conn.idle)
+		for _, c := range p.pool[remoteAddr] {
+			debug("%p, ", c)
+		}
+		fmt.Println()
 		idx := findIdx(p.pool[remoteAddr], conn)
 		p.pool[remoteAddr] = append(p.pool[remoteAddr][:idx], p.pool[remoteAddr][idx+1:]...)
 		conn.Close()
-		p.mutex.Unlock()
 	}()
 }
 
@@ -88,21 +106,23 @@ func (p ConnectionPool) createConn(tcpAddr *net.TCPAddr) (conn *ManagedConn) {
 	if err == nil {
 		conn = &ManagedConn{
 			TCPConn: *rawConn,
-			idle:    false,
+			idle:    0,
 		}
-		p.mutex.Lock()
 		p.pool[tcpAddr.String()] = append(p.pool[tcpAddr.String()], conn)
-		p.mutex.Unlock()
+		debug("creating new conn: %p\n", conn)
 	}
 	return
 }
 
 func (p ConnectionPool) getFreeConn(tcpAddr string) (c *ManagedConn) {
 	for _, c = range p.pool[tcpAddr] {
-		if c.idle {
+		debug("scanning cann %p, idle: %v\n", c, c.idle)
+		if atomic.LoadUint32(&c.idle) == 1 {
+			debug("found free conn: %p\n", c)
 			return
 		}
 	}
+	c = nil // dont return the last one
 	return
 }
 
