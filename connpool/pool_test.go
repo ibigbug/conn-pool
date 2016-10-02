@@ -16,11 +16,11 @@ func handleError(err error, t *testing.T) {
 	}
 }
 
-func TestConnpoolGetAndRelease(t *testing.T) {
+func TestConnCache(t *testing.T) {
 	p := NewPool()
 	p.SetKeepAliveTimeout(3 * time.Second)
 
-	conn1, err := p.GetConn("a1.alipay-inc.xyz")
+	conn1, err := p.Get("a1.alipay-inc.xyz")
 	handleError(err, t)
 	if conn1 == nil {
 		t.Error(1)
@@ -30,7 +30,74 @@ func TestConnpoolGetAndRelease(t *testing.T) {
 		t.Error(2)
 	}
 
-	conn2, err := p.GetConn("a2.alipay-inc.xyz")
+	conn2, err := p.Get("a1.alipay-inc.xyz")
+	handleError(err, t)
+	if conn2 == nil {
+		t.Error(3)
+	}
+	if conn1 == conn2 {
+		// should create new conn
+		t.Error(4)
+	}
+
+	if len(p.pool[A1]) != 2 {
+		t.Error(5)
+	}
+
+	p.Release(conn1)
+
+	conn3, err := p.Get("a1.alipay-inc.xyz")
+	handleError(err, t)
+	if conn3 == nil {
+		t.Error(6)
+	}
+
+	// wait Release conn1 go-routine pass
+	t1 := time.NewTimer(5 * time.Second)
+	<-t1.C
+
+	// conn1 should be kept
+	if len(p.pool[A1]) != 2 {
+		t.Error(7)
+	}
+
+	if conn1 != conn3 {
+		// should reuse conn
+		t.Error(8)
+	}
+
+	p.Release(conn2)
+	p.Release(conn3)
+
+	conn1 = nil
+	conn2 = nil
+	conn3 = nil
+
+	timer := time.NewTimer(5 * time.Second)
+	<-timer.C
+
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if len(p.pool[A1]) != 0 {
+		t.Error(9)
+	}
+}
+
+func TestConnpoolGetAndRelease(t *testing.T) {
+	p := NewPool()
+	p.SetKeepAliveTimeout(3 * time.Second)
+
+	conn1, err := p.Get("a1.alipay-inc.xyz")
+	handleError(err, t)
+	if conn1 == nil {
+		t.Error(1)
+	}
+
+	if len(p.pool[A1]) != 1 {
+		t.Error(2)
+	}
+
+	conn2, err := p.Get("a2.alipay-inc.xyz")
 	handleError(err, t)
 	if conn2 == nil {
 		t.Error(3)
@@ -49,11 +116,15 @@ func TestConnpoolGetAndRelease(t *testing.T) {
 		t.Error(6)
 	}
 
-	p.ReleaseConn(conn1)
-	p.ReleaseConn(conn2)
+	p.Release(conn1)
+	p.Release(conn2)
 
 	timer = time.NewTimer(4 * time.Second)
 	<-timer.C
+
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
 	if len(p.pool[A1]) != 0 {
 		t.Error(7)
 	}
