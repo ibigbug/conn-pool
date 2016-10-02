@@ -16,6 +16,41 @@ func handleError(err error, t *testing.T) {
 	}
 }
 
+func TestUseReleasedConnImmediately(t *testing.T) {
+	p := NewPool()
+	p.SetKeepAliveTimeout(3 * time.Second)
+
+	conn1, err := p.Get("a1.alipay-inc.xyz")
+	handleError(err, t)
+	if conn1 == nil {
+		t.Error(1)
+	}
+
+	if len(p.pool[A1]) != 1 {
+		t.Error(2)
+	}
+
+	// mark conn1 as idle
+	p.Release(conn1)
+
+	// reuse it, conn1.idle should be false
+	conn2, err := p.Get("a1.alipay-inc.xyz")
+
+	// mark it idle again
+	// now there should be to Release go routine hold this conn
+	p.Release(conn2)
+
+	timer := time.NewTimer(5 * time.Second)
+	<-timer.C
+
+	// there should be nothing
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if len(p.pool[A1]) != 0 {
+		t.Error(3)
+	}
+}
+
 func TestConnCache(t *testing.T) {
 	p := NewPool()
 	p.SetKeepAliveTimeout(3 * time.Second)
