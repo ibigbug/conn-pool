@@ -1,6 +1,7 @@
 package connpool
 
 import (
+	"net"
 	"testing"
 	"time"
 )
@@ -226,4 +227,14 @@ func TestRemoveConn(t *testing.T) {
 	if len(p.pool[A2].conns) != 0 {
 		t.Error(8)
 	}
+}
+
+func TestTimeout(t *testing.T) {
+	p := NewPool()
+	p.SetKeepAliveTimeout(3 * time.Second)
+	_, err := p.GetTimeout("a1.alipay-inc.xyz", 1*time.Millisecond)
+	if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+		return
+	}
+	t.Error(9)
 }

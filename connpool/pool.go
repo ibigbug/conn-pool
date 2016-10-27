@@ -41,9 +41,16 @@ func (p *ConnectionPool) SetKeepAliveTimeout(to time.Duration) {
 }
 
 // Get get a connection with specific remote address
-// could be domain:port/ip:port
-func (p *ConnectionPool) Get(remoteAddr string) (conn *ManagedConn, err error) {
+func (p *ConnectionPool) Get(remoteAddr string) (*ManagedConn, error) {
+	return p.get(remoteAddr, 0)
+}
 
+// Get get a connection with timeout
+func (p *ConnectionPool) GetTimeout(remoteAddr string, timeout time.Duration) (*ManagedConn, error) {
+	return p.get(remoteAddr, timeout)
+}
+
+func (p *ConnectionPool) get(remoteAddr string, timeout time.Duration) (conn *ManagedConn, err error) {
 	remoteAddr = ensurePort(remoteAddr)
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", remoteAddr)
 	if err != nil {
@@ -61,11 +68,11 @@ func (p *ConnectionPool) Get(remoteAddr string) (conn *ManagedConn, err error) {
 	defer mgr.Unlock()
 
 	if len(mgr.conns) == 0 {
-		conn = p.createConn(tcpAddr)
+		conn, err = p.createConn(tcpAddr, timeout)
 	} else {
 		conn = p.getFreeConn(id)
 		if conn == nil {
-			conn = p.createConn(tcpAddr)
+			conn, err = p.createConn(tcpAddr, timeout)
 		} else {
 			debug("reusing conn %p, idle changed to 0\n", conn)
 			atomic.StoreUint32(&conn.idle, 0)
@@ -119,11 +126,16 @@ func (p *ConnectionPool) remove(conn *ManagedConn) {
 	conn.Close()
 }
 
-func (p ConnectionPool) createConn(tcpAddr *net.TCPAddr) (conn *ManagedConn) {
-	rawConn, err := net.DialTCP("tcp4", nil, tcpAddr)
+func (p ConnectionPool) createConn(tcpAddr *net.TCPAddr, timeout time.Duration) (conn *ManagedConn, err error) {
+	var rawConn net.Conn
+	if timeout == 0 {
+		rawConn, err = net.Dial("tcp4", tcpAddr.String())
+	} else {
+		rawConn, err = net.DialTimeout("tcp4", tcpAddr.String(), timeout)
+	}
 	if err == nil {
 		conn = &ManagedConn{
-			TCPConn: *rawConn,
+			TCPConn: *rawConn.(*net.TCPConn),
 			idle:    0,
 		}
 		mgr := p.pool[tcpAddr.String()]
